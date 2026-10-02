@@ -3,7 +3,7 @@ import { buildGarmentModel, type AssetSource } from "@/lib/upload-ai-assets";
 import { SHEET_VIEWS } from "@/lib/upload-ai-sheet";
 
 export const runtime = "nodejs";
-export const maxDuration = 20000;
+export const maxDuration = 300;
 
 const MIME: Record<string, string> = {
   "image/png": "image/png",
