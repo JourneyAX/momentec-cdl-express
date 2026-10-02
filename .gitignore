@@ -18,3 +18,8 @@ tsconfig.tsbuildinfo
 .next-incomplete-*/
 .next-stale-*/
 .env*
+.cursor/*
+graphify-out/*
+scratch/*
+assets/upload-ai-design/
+assets/user-uploaded/
