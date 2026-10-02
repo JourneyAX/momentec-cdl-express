@@ -107,6 +107,7 @@ export async function buildAssetZip(
   fields: DesignFields,
   failed: string[],
   uploads: UserUpload[] = [],
+  model?: Buffer,
 ): Promise<Buffer> {
   const zip = new JSZip();
   for (const source of sources) {
@@ -114,6 +115,10 @@ export async function buildAssetZip(
   }
   for (const file of files) zip.file(file.filename, file.svg);
   for (const upload of uploads) zip.file(`user-uploaded/${upload.filename}`, upload.buffer);
-  zip.file("order.json", JSON.stringify({ ...fields, failed, uploads: uploads.map((upload) => upload.filename) }, null, 2));
+  if (model) zip.file("model.glb", model);
+  zip.file(
+    "order.json",
+    JSON.stringify({ ...fields, failed, uploads: uploads.map((upload) => upload.filename), model: model ? "model.glb" : null }, null, 2),
+  );
   return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
 }

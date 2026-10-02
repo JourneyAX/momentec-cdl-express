@@ -1,8 +1,11 @@
 "use client";
 
 import { FormEvent, MouseEvent, useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { compressImageForUpload, isolateGarment, preloadBackgroundRemoval } from "@/lib/client-image";
 import "./upload-ai-design.css";
+
+const UploadAiModel = dynamic(() => import("./UploadAiModel").then((mod) => mod.UploadAiModel), { ssr: false });
 
 const ACCEPT = ".jpg,.jpeg,.png,.webp";
 const ACCEPT_RE = /\.(jpe?g|png|webp)$/i;
@@ -69,9 +72,15 @@ export function UploadAiDesignModal() {
   const [category, setCategory] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [preparing, setPreparing] = useState(false);
+  const [modelUrl, setModelUrl] = useState<string | null>(null);
+  const [modelFile, setModelFile] = useState<File | null>(null);
+  const [showingModel, setShowingModel] = useState(false);
+  const [makingModel, setMakingModel] = useState(false);
   const referencesRef = useRef(references);
   const viewsRef = useRef(views);
   const cutoutToken = useRef<Record<string, number>>({});
+  const modelToken = useRef(0);
+  const modelUrlRef = useRef<string | null>(null);
   referencesRef.current = references;
   viewsRef.current = views;
 
@@ -81,6 +90,7 @@ export function UploadAiDesignModal() {
       for (const view of Object.values(viewsRef.current)) {
         if (view) URL.revokeObjectURL(view.url);
       }
+      if (modelUrlRef.current) URL.revokeObjectURL(modelUrlRef.current);
     };
   }, []);
 
@@ -107,6 +117,17 @@ export function UploadAiDesignModal() {
     }
     setReferences([]);
     setViews(EMPTY_VIEWS);
+    clearModel();
+  }
+
+  function clearModel() {
+    modelToken.current += 1;
+    if (modelUrlRef.current) URL.revokeObjectURL(modelUrlRef.current);
+    modelUrlRef.current = null;
+    setModelUrl(null);
+    setModelFile(null);
+    setShowingModel(false);
+    setMakingModel(false);
   }
 
   function reopen() {
@@ -192,6 +213,7 @@ export function UploadAiDesignModal() {
     const body = new FormData();
     for (const file of files) body.append("reference", file);
     if (instruction) body.append("instruction", instruction);
+    clearModel();
     setGenerating(true);
     setFileError("");
     try {
@@ -257,6 +279,43 @@ export function UploadAiDesignModal() {
     }
     setViews(EMPTY_VIEWS);
     setEditNote("");
+    clearModel();
+  }
+
+  async function viewIn3d() {
+    if (modelUrl) {
+      setShowingModel(true);
+      return;
+    }
+    const body = new FormData();
+    for (const view of VIEWS) {
+      const file = views[view.id]?.file;
+      if (file) body.append(view.id, file);
+    }
+    const token = modelToken.current;
+    setMakingModel(true);
+    setFileError("");
+    try {
+      const response = await fetch("/api/upload-ai-design/model", { method: "POST", body });
+      if (modelToken.current !== token) return;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        setFileError(typeof payload?.error === "string" ? payload.error : "Could not make the 3D view.");
+        return;
+      }
+      const blob = await response.blob();
+      if (modelToken.current !== token) return;
+      const file = new File([blob], "model.glb", { type: "model/gltf-binary" });
+      const url = URL.createObjectURL(file);
+      modelUrlRef.current = url;
+      setModelFile(file);
+      setModelUrl(url);
+      setShowingModel(true);
+    } catch {
+      if (modelToken.current === token) setFileError("Could not make the 3D view.");
+    } finally {
+      if (modelToken.current === token) setMakingModel(false);
+    }
   }
 
   const isRemovingBackground = Object.values(processing).some(Boolean);
@@ -276,6 +335,7 @@ export function UploadAiDesignModal() {
       if (file) body.append(view.id, file);
     }
     for (const item of referencesRef.current) body.append("upload", item.source);
+    if (modelFile) body.append("model", modelFile);
     setPreparing(true);
     setFileError("");
     try {
@@ -378,33 +438,51 @@ export function UploadAiDesignModal() {
                 <span>{references.length === 0 ? "" : referenceLabel}</span>
                 <span>JPG, PNG, or WEBP</span>
               </p>
+              {viewCount === 4 && !generating ? (
+                <div className="upload-ai-3d-bar">
+                  {showingModel ? (
+                    <button type="button" className="upload-ai-3d" onClick={() => setShowingModel(false)}>
+                      Back to 4 views
+                    </button>
+                  ) : (
+                    <button type="button" className="upload-ai-3d" onClick={viewIn3d} disabled={makingModel || preparing}>
+                      {makingModel ? "Making the 3D view" : "View in 3D"}
+                      <span className="upload-ai-beta">Beta</span>
+                    </button>
+                  )}
+                </div>
+              ) : null}
               {(generating || viewCount > 0) ? (
+                showingModel && modelUrl ? (
+                  <UploadAiModel url={modelUrl} />
+                ) : (
                 <div className="upload-ai-views">
-                  {generating ? (
+                  {generating || makingModel ? (
                     <div className="upload-ai-dots" aria-hidden="true">
                       <div className="upload-ai-dots-field" />
                       <div className="upload-ai-dots-shine" />
-                      <span className="upload-ai-dots-label">Creating images</span>
+                      <span className="upload-ai-dots-label">{makingModel ? "Making the 3D view" : "Creating images"}</span>
                     </div>
                   ) : null}
                   {VIEWS.map((view) => (
-                    <ViewSlot key={view.id} id={view.id} label={view.label} file={views[view.id]} />
+                    <ViewSlot key={view.id} id={view.id} label={view.label} file={views[view.id]} zoom={!(generating || makingModel)} />
                   ))}
                 </div>
+                )
               ) : null}
-              {viewCount === 4 ? (
+              {viewCount === 4 && !showingModel ? (
                 <div className="upload-ai-edit">
                   <label>
                     <span>Change the look</span>
                     <textarea
                       rows={2}
                       value={editNote}
-                      disabled={generating}
+                      disabled={generating || makingModel}
                       placeholder="Brighter colors, thicker stripes, a cleaner collar"
                       onChange={(event) => setEditNote(event.target.value)}
                     />
                   </label>
-                  <button type="button" className="upload-ai-generate" onClick={applyEdit} disabled={generating || preparing || editNote.trim().length === 0}>
+                  <button type="button" className="upload-ai-generate" onClick={applyEdit} disabled={generating || makingModel || preparing || editNote.trim().length === 0}>
                     {generating ? "Making the views" : "Apply this edit"}
                   </button>
                 </div>
@@ -486,17 +564,23 @@ function ViewSlot({
   id,
   label,
   file,
+  zoom,
 }: {
   id: ViewId;
   label: string;
   file: ViewFile | null;
+  zoom: boolean;
 }) {
   const imgRef = useRef<HTMLImageElement>(null);
   const [lens, setLens] = useState<{ left: number; top: number; width: number; height: number; posX: number; posY: number } | null>(null);
 
+  useEffect(() => {
+    if (!zoom) setLens(null);
+  }, [zoom]);
+
   function onMouseMove(event: MouseEvent<HTMLDivElement>) {
     const img = imgRef.current;
-    if (!file || !img) {
+    if (!zoom || !file || !img) {
       setLens(null);
       return;
     }

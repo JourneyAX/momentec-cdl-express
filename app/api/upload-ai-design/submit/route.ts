@@ -49,11 +49,14 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  const modelFile = form.get("model");
+  const model = modelFile instanceof File && modelFile.size > 0 ? Buffer.from(await modelFile.arrayBuffer()) : undefined;
+
   const id = crypto.randomUUID();
   createOrder(id, fields);
   await saveUserUploads(id, uploads);
   const origin = req.nextUrl.origin;
-  after(() => deliver(origin, id, fields, sources, uploads));
+  after(() => deliver(origin, id, fields, sources, uploads, model));
   return NextResponse.json({ id }, { status: 202 });
 }
 
@@ -61,14 +64,14 @@ function text(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-async function deliver(origin: string, id: string, fields: DesignFields, sources: AssetSource[], uploads: UserUpload[]): Promise<void> {
+async function deliver(origin: string, id: string, fields: DesignFields, sources: AssetSource[], uploads: UserUpload[], model?: Buffer): Promise<void> {
   try {
     const { files, failed } = await buildAssetSvgs(sources);
     if (files.length === 0) {
       markFailed(id, "Magnific did not return vector SVG files.");
       return;
     }
-    const zip = await buildAssetZip(sources, files, fields, failed, uploads);
+    const zip = await buildAssetZip(sources, files, fields, failed, uploads, model);
     const body = new FormData();
     body.set("id", id);
     body.set("category", fields.category);

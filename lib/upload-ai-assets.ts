@@ -160,9 +160,9 @@ async function uploadSource(client: Client, source: AssetSource): Promise<string
   return identifier;
 }
 
-async function waitForCreation(client: Client, identifier: string, label: string): Promise<void> {
-  const deadline = Date.now() + POLL_TIMEOUT_MS;
-  while (Date.now() < deadline) {
+async function waitForCreation(client: Client, identifier: string, label: string, timeoutMs: number | null = POLL_TIMEOUT_MS): Promise<void> {
+  const deadline = timeoutMs === null ? null : Date.now() + timeoutMs;
+  while (deadline === null || Date.now() < deadline) {
     const response = await client.callTool({
       name: "creations_wait",
       arguments: { identifiers: [identifier], timeoutSeconds: 25 },
@@ -182,7 +182,7 @@ async function waitForCreation(client: Client, identifier: string, label: string
   throw new Error(`${label} timed out.`);
 }
 
-async function creationUrl(client: Client, identifier: string): Promise<string> {
+async function creationUrl(client: Client, identifier: string, missing = "Magnific did not return an SVG download URL."): Promise<string> {
   const response = await client.callTool({
     name: "creations_wait",
     arguments: { identifiers: [identifier], timeoutSeconds: 25 },
@@ -192,7 +192,7 @@ async function creationUrl(client: Client, identifier: string): Promise<string> 
   const match = results.find((item) => isRecord(item) && item.identifier === identifier) ?? results[0];
   if (isRecord(match) && isRecord(match.results) && typeof match.results.url === "string") return match.results.url;
   const url = resultText(response).match(/"url"\s*:\s*"(https?:\/\/[^"\\]+)"/)?.[1];
-  if (!url) throw new Error("Magnific did not return an SVG download URL.");
+  if (!url) throw new Error(missing);
   return url;
 }
 
@@ -244,4 +244,34 @@ export async function buildAssetSvgs(sources: AssetSource[]): Promise<{ files: {
     }
   }
   return { files, failed };
+}
+
+export async function buildGarmentModel(sources: AssetSource[]): Promise<Buffer> {
+  const byView = new Map(sources.map((source) => [source.view, source]));
+  const ordered = (["front", "left", "back", "right"] as const).map((view) => byView.get(view));
+  if (ordered.some((source) => !source)) throw new Error("Make the four views before opening the 3D view.");
+
+  const client = await mcpClient();
+  const views: Record<string, string> = {};
+  for (const source of ordered) {
+    if (!source) continue;
+    views[source.view] = await uploadSource(client, source);
+  }
+  const response = await client.callTool({
+    name: "models3d_generate",
+    arguments: {
+      model: "tripo-v31",
+      views,
+      textureQuality: "standard",
+      faceLimit: 50000,
+    },
+  });
+  const identifier = creationIdentifier(response);
+  if (!identifier) throw new Error("Magnific did not queue the 3D view.");
+  await waitForCreation(client, identifier, "3D view", null);
+  const download = await fetch(await creationUrl(client, identifier, "Magnific did not return a 3D model."), {
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!download.ok) throw new Error(`Unable to download the 3D model (${download.status}).`);
+  return Buffer.from(await download.arrayBuffer());
 }
