@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const saved = markReceived(id, Buffer.from(await archive.arrayBuffer()), failed, fields);
+  const saved = await markReceived(id, Buffer.from(await archive.arrayBuffer()), failed, fields);
   if (!saved) return NextResponse.json({ error: "That design is not waiting." }, { status: 404 });
   return NextResponse.json({ id, status: "received" });
 }

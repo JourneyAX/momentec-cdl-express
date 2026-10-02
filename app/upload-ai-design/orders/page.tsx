@@ -3,8 +3,8 @@ import "./orders.css";
 
 export const dynamic = "force-dynamic";
 
-export default function UploadAiOrdersPage() {
-  const orders = listOrders();
+export default async function UploadAiOrdersPage() {
+  const orders = await listOrders();
   return (
     <main className="upload-ai-orders">
       <h1>Designs</h1>

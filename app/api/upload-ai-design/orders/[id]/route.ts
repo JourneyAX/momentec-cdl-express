@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
-  const packed = orderZip(id);
+  const packed = await orderZip(id);
   if (!packed) return NextResponse.json({ error: "That package is not ready." }, { status: 404 });
   return new NextResponse(new Uint8Array(packed.zip), {
     headers: {

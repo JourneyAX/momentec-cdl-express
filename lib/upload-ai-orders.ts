@@ -3,6 +3,7 @@ import "server-only";
 import { mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { get, list, put } from "@vercel/blob";
 import JSZip from "jszip";
 import type { AssetSource } from "./upload-ai-assets";
 
@@ -32,16 +33,49 @@ const IMAGE_EXT: Record<string, string> = {
   "image/webp": "webp",
 };
 
+type ListedOrder = Omit<DesignOrder, "zip"> & { ready: boolean };
+
+const BLOB_PREFIX = "cdl-express/upload-ai-design/orders";
+
 const globalStore = globalThis as typeof globalThis & {
   __uploadAiOrders?: Map<string, DesignOrder>;
 };
+
+function usesBlob(): boolean {
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+}
 
 function orders(): Map<string, DesignOrder> {
   if (!globalStore.__uploadAiOrders) globalStore.__uploadAiOrders = new Map();
   return globalStore.__uploadAiOrders;
 }
 
-export function createOrder(id: string, fields: DesignFields): DesignOrder {
+function orderKey(id: string): string | null {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  return id;
+}
+
+function listed(order: DesignOrder): ListedOrder {
+  const { zip, ...rest } = order;
+  return { ...rest, ready: Boolean(zip) };
+}
+
+async function readStoredOrder(id: string): Promise<ListedOrder | null> {
+  const file = await get(`${BLOB_PREFIX}/${id}.json`, { access: "private" });
+  if (!file || file.statusCode !== 200) return null;
+  return JSON.parse(await new Response(file.stream).text()) as ListedOrder;
+}
+
+async function writeStoredOrder(order: ListedOrder): Promise<void> {
+  await put(`${BLOB_PREFIX}/${order.id}.json`, JSON.stringify(order), {
+    access: "private",
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    contentType: "application/json",
+  });
+}
+
+export async function createOrder(id: string, fields: DesignFields): Promise<DesignOrder> {
   const order: DesignOrder = {
     id,
     ...fields,
@@ -50,24 +84,64 @@ export function createOrder(id: string, fields: DesignFields): DesignOrder {
     error: "",
     createdAt: new Date().toISOString(),
   };
-  orders().set(id, order);
+  if (usesBlob()) await writeStoredOrder(listed(order));
+  else orders().set(id, order);
   return order;
 }
 
-export function listOrders(): Array<Omit<DesignOrder, "zip"> & { ready: boolean }> {
+export async function listOrders(): Promise<ListedOrder[]> {
+  if (usesBlob()) {
+    const result = await list({ prefix: `${BLOB_PREFIX}/`, limit: 1000 });
+    const records = await Promise.all(
+      result.blobs.filter((blob) => blob.pathname.endsWith(".json")).map(async (blob) => {
+        const file = await get(blob.pathname, { access: "private" });
+        if (!file || file.statusCode !== 200) return null;
+        return JSON.parse(await new Response(file.stream).text()) as ListedOrder;
+      }),
+    );
+    return records.filter((order): order is ListedOrder => Boolean(order)).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
   return [...orders().values()]
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-    .map(({ zip, ...order }) => ({ ...order, ready: Boolean(zip) }));
+    .map((order) => listed(order));
 }
 
-export function orderZip(id: string): { filename: string; zip: Buffer } | null {
-  const order = orders().get(id);
+export async function orderZip(id: string): Promise<{ filename: string; zip: Buffer } | null> {
+  const key = orderKey(id);
+  if (!key) return null;
+  if (usesBlob()) {
+    const file = await get(`${BLOB_PREFIX}/${key}.zip`, { access: "private" });
+    if (!file || file.statusCode !== 200) return null;
+    return { filename: `${key}.zip`, zip: Buffer.from(await new Response(file.stream).arrayBuffer()) };
+  }
+  const order = orders().get(key);
   if (!order?.zip) return null;
   return { filename: `${order.id}.zip`, zip: order.zip };
 }
 
-export function markReceived(id: string, zip: Buffer, failed: string[], fields: DesignFields): boolean {
-  const order = orders().get(id);
+export async function markReceived(id: string, zip: Buffer, failed: string[], fields: DesignFields): Promise<boolean> {
+  const key = orderKey(id);
+  if (!key) return false;
+  if (usesBlob()) {
+    const order = await readStoredOrder(key);
+    if (!order) return false;
+    await put(`${BLOB_PREFIX}/${key}.zip`, zip, {
+      access: "private",
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: "application/zip",
+    });
+    await writeStoredOrder({
+      ...order,
+      ...fields,
+      status: "received",
+      failed,
+      error: "",
+      ready: true,
+    });
+    return true;
+  }
+  const order = orders().get(key);
   if (!order) return false;
   order.status = "received";
   order.zip = zip;
@@ -80,8 +154,16 @@ export function markReceived(id: string, zip: Buffer, failed: string[], fields: 
   return true;
 }
 
-export function markFailed(id: string, error: string): void {
-  const order = orders().get(id);
+export async function markFailed(id: string, error: string): Promise<void> {
+  const key = orderKey(id);
+  if (!key) return;
+  if (usesBlob()) {
+    const order = await readStoredOrder(key);
+    if (!order || order.status === "received") return;
+    await writeStoredOrder({ ...order, status: "failed", error, ready: false });
+    return;
+  }
+  const order = orders().get(key);
   if (!order || order.status === "received") return;
   order.status = "failed";
   order.error = error;

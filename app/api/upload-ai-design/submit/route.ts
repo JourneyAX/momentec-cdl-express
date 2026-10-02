@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   const model = modelFile instanceof File && modelFile.size > 0 ? Buffer.from(await modelFile.arrayBuffer()) : undefined;
 
   const id = crypto.randomUUID();
-  createOrder(id, fields);
+  await createOrder(id, fields);
   await saveUserUploads(id, uploads);
   const origin = req.nextUrl.origin;
   after(() => deliver(origin, id, fields, sources, uploads, model));
@@ -68,7 +68,7 @@ async function deliver(origin: string, id: string, fields: DesignFields, sources
   try {
     const { files, failed } = await buildAssetSvgs(sources);
     if (files.length === 0) {
-      markFailed(id, "Magnific did not return vector SVG files.");
+      await markFailed(id, "Magnific did not return vector SVG files.");
       return;
     }
     const zip = await buildAssetZip(sources, files, fields, failed, uploads, model);
@@ -81,10 +81,10 @@ async function deliver(origin: string, id: string, fields: DesignFields, sources
     body.set("failed", JSON.stringify(failed));
     body.set("archive", new Blob([new Uint8Array(zip)], { type: "application/zip" }), `${id}.zip`);
     const response = await fetch(`${origin}/api/upload-ai-design/intake`, { method: "POST", body });
-    if (!response.ok) markFailed(id, "The art package could not be delivered.");
+    if (!response.ok) await markFailed(id, "The art package could not be delivered.");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not prepare the art files.";
     console.error("upload-ai-design submit failed:", message);
-    markFailed(id, message === "Magnific MCP credentials are not configured." ? message : "Could not prepare the art files.");
+    await markFailed(id, message === "Magnific MCP credentials are not configured." ? message : "Could not prepare the art files.");
   }
 }
