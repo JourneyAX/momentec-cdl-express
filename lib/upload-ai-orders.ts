@@ -1,6 +1,7 @@
 import "server-only";
 
 import { mkdir, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import JSZip from "jszip";
 import type { AssetSource } from "./upload-ai-assets";
@@ -86,9 +87,14 @@ export function markFailed(id: string, error: string): void {
   order.error = error;
 }
 
+function userUploadRoot(): string {
+  if (process.env.VERCEL || process.env.K_SERVICE) return path.join(os.tmpdir(), "assets", "user-uploaded");
+  return path.join(process.cwd(), "assets", "user-uploaded");
+}
+
 export async function saveUserUploads(id: string, uploads: UserUpload[]): Promise<void> {
   if (uploads.length === 0) return;
-  const folder = path.join(process.cwd(), "assets", "user-uploaded", id);
+  const folder = path.join(userUploadRoot(), id);
   await mkdir(folder, { recursive: true });
   for (const upload of uploads) {
     await writeFile(path.join(folder, upload.filename), upload.buffer);
