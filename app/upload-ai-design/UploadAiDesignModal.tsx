@@ -14,10 +14,12 @@ const VIEWS = [
   { id: "right", label: "Right" },
 ] as const;
 
+const MAX_REFERENCES = 8;
+
 type ViewId = (typeof VIEWS)[number]["id"];
 type ViewFile = { file: File; url: string; ready: boolean };
 type ViewMap = Record<ViewId, ViewFile | null>;
-type ProcessingMap = Partial<Record<ViewId, boolean>>;
+type Reference = { id: string; file: File; url: string; ready: boolean };
 
 const EMPTY_VIEWS: ViewMap = { front: null, back: null, left: null, right: null };
 
@@ -64,19 +66,24 @@ function filledLabels(views: ViewMap) {
 
 export function UploadAiDesignModal() {
   const [open, setOpen] = useState(true);
+  const [references, setReferences] = useState<Reference[]>([]);
   const [views, setViews] = useState<ViewMap>(EMPTY_VIEWS);
   const [fileError, setFileError] = useState("");
-  const [dragOver, setDragOver] = useState<ViewId | null>(null);
-  const [processing, setProcessing] = useState<ProcessingMap>({});
+  const [dragOver, setDragOver] = useState(false);
+  const [processing, setProcessing] = useState<Record<string, boolean>>({});
   const [generating, setGenerating] = useState(false);
+  const [editNote, setEditNote] = useState("");
   const [category, setCategory] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const referencesRef = useRef(references);
   const viewsRef = useRef(views);
-  const cutoutToken = useRef<Partial<Record<ViewId, number>>>({});
+  const cutoutToken = useRef<Record<string, number>>({});
+  referencesRef.current = references;
   viewsRef.current = views;
 
   useEffect(() => {
     return () => {
+      for (const reference of referencesRef.current) URL.revokeObjectURL(reference.url);
       for (const view of Object.values(viewsRef.current)) {
         if (view) URL.revokeObjectURL(view.url);
       }
@@ -99,17 +106,20 @@ export function UploadAiDesignModal() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  function clearViews() {
+  function clearDesign() {
+    for (const reference of referencesRef.current) URL.revokeObjectURL(reference.url);
     for (const view of Object.values(viewsRef.current)) {
       if (view) URL.revokeObjectURL(view.url);
     }
+    setReferences([]);
     setViews(EMPTY_VIEWS);
   }
 
   function reopen() {
     setSubmitted(false);
-    clearViews();
+    clearDesign();
     setFileError("");
+    setEditNote("");
     setCategory("");
     setOpen(true);
   }
@@ -123,23 +133,34 @@ export function UploadAiDesignModal() {
     });
   }
 
-  async function cutOut(id: ViewId, next: File) {
+  function placeReference(id: string, file: File, ready: boolean) {
+    const url = URL.createObjectURL(file);
+    setReferences((current) => {
+      const previous = current.find((item) => item.id === id);
+      if (previous) URL.revokeObjectURL(previous.url);
+      const next = { id, file, url, ready };
+      if (!previous) return [...current, next];
+      return current.map((item) => (item.id === id ? next : item));
+    });
+  }
+
+  async function cutOut(id: string, next: File) {
     const token = (cutoutToken.current[id] ?? 0) + 1;
     cutoutToken.current[id] = token;
-    replaceView(id, next, false);
+    placeReference(id, next, false);
     setProcessing((current) => ({ ...current, [id]: true }));
     setFileError("");
 
     try {
       const isolated = await isolateGarment(next, `${id}-isolated.png`);
       if (cutoutToken.current[id] !== token) return;
-      replaceView(id, isolated, true);
+      placeReference(id, isolated, true);
     } catch (err) {
-      console.warn(`Auto background removal for ${id} skipped:`, err);
+      console.warn("Auto background removal skipped:", err);
       try {
         const compressed = await compressImageForUpload(next);
         if (cutoutToken.current[id] !== token) return;
-        replaceView(id, compressed, false);
+        placeReference(id, compressed, false);
       } catch {
         // Keep the original preview already on screen.
       }
@@ -154,26 +175,29 @@ export function UploadAiDesignModal() {
     }
   }
 
-  async function takeFile(id: ViewId, list: FileList | null) {
-    const next = list?.[0];
-    if (!next) return;
-    if (!ACCEPT_RE.test(next.name)) {
+  function takeFiles(list: FileList | null) {
+    const incoming = Array.from(list ?? []);
+    if (incoming.length === 0) return;
+    if (incoming.some((file) => !ACCEPT_RE.test(file.name))) {
       setFileError("Use a .jpg, .png, or .webp image.");
       return;
     }
-    await cutOut(id, next);
+    const room = MAX_REFERENCES - referencesRef.current.length;
+    if (room <= 0) {
+      setFileError("You can add up to 8 images.");
+      return;
+    }
+    const accepted = incoming.slice(0, room);
+    if (accepted.length < incoming.length) setFileError("You can add up to 8 images.");
+    for (const file of accepted) void cutOut(crypto.randomUUID(), file);
   }
 
-  async function generateRest() {
-    if (generating) return;
-    const ready = VIEWS.flatMap((view) => {
-      const slot = views[view.id];
-      return slot?.ready ? [{ id: view.id, file: slot.file }] : [];
-    });
-    if (ready.length === 0) return;
+  async function requestSheet(files: File[], instruction = "") {
+    if (generating || files.length === 0) return;
 
     const body = new FormData();
-    for (const slot of ready) body.append(slot.id, slot.file);
+    for (const file of files) body.append("reference", file);
+    if (instruction) body.append("instruction", instruction);
     setGenerating(true);
     setFileError("");
     try {
@@ -204,36 +228,60 @@ export function UploadAiDesignModal() {
     }
   }
 
-  function removeView(id: ViewId) {
+  function generateRest() {
+    const ready = references.filter((item) => item.ready).map((item) => item.file);
+    void requestSheet(ready);
+  }
+
+  function applyEdit() {
+    const note = editNote.trim();
+    if (!note) {
+      setFileError("Tell us what to change.");
+      return;
+    }
+    const files = VIEWS.flatMap((view) => {
+      const slot = views[view.id];
+      return slot?.ready ? [slot.file] : [];
+    });
+    void requestSheet(files, note);
+  }
+
+  function removeReference(id: string) {
     cutoutToken.current[id] = (cutoutToken.current[id] ?? 0) + 1;
     setProcessing((current) => {
       const nextState = { ...current };
       delete nextState[id];
       return nextState;
     });
-    setViews((current) => {
-      const previous = current[id];
+    setReferences((current) => {
+      const previous = current.find((item) => item.id === id);
       if (previous) URL.revokeObjectURL(previous.url);
-      return { ...current, [id]: null };
+      return current.filter((item) => item.id !== id);
     });
+    for (const view of Object.values(viewsRef.current)) {
+      if (view) URL.revokeObjectURL(view.url);
+    }
+    setViews(EMPTY_VIEWS);
+    setEditNote("");
   }
 
   const isRemovingBackground = Object.values(processing).some(Boolean);
-  const hasReadyView = VIEWS.some((view) => views[view.id]?.ready);
-  const fieldsLocked = !hasReadyView || isRemovingBackground || generating;
+  const hasReadyReference = references.some((item) => item.ready);
   const inputsLocked = isRemovingBackground || generating;
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (fieldsLocked) return;
-    if (!VIEWS.some((view) => views[view.id])) {
-      setFileError("Add a front, back, left, or right image.");
+    if (!VIEWS.every((view) => views[view.id]?.ready)) {
+      setFileError("Make the four views before uploading the design.");
       return;
     }
     setSubmitted(true);
   }
 
   const viewCount = VIEWS.filter((view) => views[view.id]).length;
+  const fieldsLocked = viewCount < 4 || isRemovingBackground || generating;
+  const referenceLabel = references.length === 1 ? "1 image" : `${references.length} images`;
 
   if (!open) {
     return (
@@ -269,41 +317,92 @@ export function UploadAiDesignModal() {
             </p>
           ) : (
             <form onSubmit={onSubmit}>
-              <div className="upload-ai-views">
-                {generating ? (
-                  <div className="upload-ai-dots" aria-hidden="true">
-                    <div className="upload-ai-dots-field" />
-                    <div className="upload-ai-dots-shine" />
-                    <span className="upload-ai-dots-label">Creating images</span>
+              <div
+                className={["upload-ai-drop", dragOver ? "is-over" : ""].filter(Boolean).join(" ")}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  if (!inputsLocked) setDragOver(true);
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setDragOver(false);
+                  if (!inputsLocked) takeFiles(event.dataTransfer.files);
+                }}
+              >
+                <label className="upload-ai-drop-label">
+                  <input
+                    aria-label="Design images"
+                    type="file"
+                    accept={ACCEPT}
+                    multiple
+                    disabled={inputsLocked}
+                    onChange={(event) => {
+                      takeFiles(event.target.files);
+                      event.target.value = "";
+                    }}
+                  />
+                  <span className="upload-ai-drop-title">Drop your idea here</span>
+                  <span className="upload-ai-drop-hint">One photo is enough. We'll turn it into front, back, left, and right.</span>
+                  <span className="upload-ai-drop-browse">Browse</span>
+                </label>
+                {references.length > 0 ? (
+                  <div className="upload-ai-refs">
+                    {references.map((item, index) => (
+                      <div className="upload-ai-ref" key={item.id}>
+                        <img src={item.url} alt={`Design image ${index + 1}`} />
+                        {processing[item.id] ? (
+                          <div className="upload-ai-cutout" role="status" aria-label="Removing background">
+                            <span className="upload-ai-cutout-spinner" />
+                          </div>
+                        ) : (
+                          <button type="button" className="upload-ai-view-remove" aria-label={`Remove design image ${index + 1}`} onClick={() => removeReference(item.id)}>
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 ) : null}
-                {VIEWS.map((view) => (
-                  <ViewSlot
-                    key={view.id}
-                    id={view.id}
-                    label={view.label}
-                    file={views[view.id]}
-                    active={dragOver === view.id}
-                    onDragOver={() => setDragOver(view.id)}
-                    onDragLeave={() => setDragOver((current) => (current === view.id ? null : current))}
-                    onDrop={(files) => {
-                      setDragOver(null);
-                      takeFile(view.id, files);
-                    }}
-                    processing={Boolean(processing[view.id])}
-                    disabled={inputsLocked}
-                    onPick={(files) => takeFile(view.id, files)}
-                    onRemove={() => removeView(view.id)}
-                  />
-                ))}
               </div>
               <p className="upload-ai-views-meta">
-                <span>{viewCount} of 4 views</span>
+                <span>{references.length === 0 ? "" : referenceLabel}</span>
                 <span>JPG, PNG, or WEBP</span>
               </p>
-              {(generating || (hasReadyView && !isRemovingBackground && viewCount < 4)) ? (
+              {(generating || viewCount > 0) ? (
+                <div className="upload-ai-views">
+                  {generating ? (
+                    <div className="upload-ai-dots" aria-hidden="true">
+                      <div className="upload-ai-dots-field" />
+                      <div className="upload-ai-dots-shine" />
+                      <span className="upload-ai-dots-label">Creating images</span>
+                    </div>
+                  ) : null}
+                  {VIEWS.map((view) => (
+                    <ViewSlot key={view.id} id={view.id} label={view.label} file={views[view.id]} />
+                  ))}
+                </div>
+              ) : null}
+              {viewCount === 4 ? (
+                <div className="upload-ai-edit">
+                  <label>
+                    <span>Change the look</span>
+                    <textarea
+                      rows={2}
+                      value={editNote}
+                      disabled={generating}
+                      placeholder="Brighter colors, thicker stripes, a cleaner collar"
+                      onChange={(event) => setEditNote(event.target.value)}
+                    />
+                  </label>
+                  <button type="button" className="upload-ai-generate" onClick={applyEdit} disabled={generating || editNote.trim().length === 0}>
+                    {generating ? "Making the views" : "Apply this edit"}
+                  </button>
+                </div>
+              ) : null}
+              {viewCount < 4 && (generating || (hasReadyReference && !isRemovingBackground)) ? (
                 <button type="button" className="upload-ai-generate" onClick={generateRest} disabled={generating || isRemovingBackground}>
-                  {generating ? "Generating views" : "Generate the rest of the images with AI"}
+                  {generating ? "Making the views" : "Make the four views"}
                 </button>
               ) : null}
               {fileError ? <p className="upload-ai-file-error">{fileError}</p> : null}
@@ -368,33 +467,17 @@ function ViewSlot({
   id,
   label,
   file,
-  active,
-  onDragOver,
-  onDragLeave,
-  onDrop,
-  processing,
-  disabled,
-  onPick,
-  onRemove,
 }: {
   id: ViewId;
   label: string;
   file: ViewFile | null;
-  active: boolean;
-  processing: boolean;
-  disabled: boolean;
-  onDragOver: () => void;
-  onDragLeave: () => void;
-  onDrop: (files: FileList) => void;
-  onPick: (files: FileList | null) => void;
-  onRemove: () => void;
 }) {
   const imgRef = useRef<HTMLImageElement>(null);
   const [lens, setLens] = useState<{ left: number; top: number; width: number; height: number; posX: number; posY: number } | null>(null);
 
   function onMouseMove(event: MouseEvent<HTMLDivElement>) {
     const img = imgRef.current;
-    if (!file || processing || !img) {
+    if (!file || !img) {
       setLens(null);
       return;
     }
@@ -432,43 +515,14 @@ function ViewSlot({
 
   return (
     <div
-      className={[
-        "upload-ai-view",
-        file ? "has-file" : "",
-        active ? "is-over" : "",
-      ].filter(Boolean).join(" ")}
-      onDragOver={(event) => {
-        event.preventDefault();
-        onDragOver();
-      }}
-      onDragLeave={onDragLeave}
-      onDrop={(event) => {
-        event.preventDefault();
-        onDrop(event.dataTransfer.files);
-      }}
+      className={["upload-ai-view", "is-result", file ? "has-file" : ""].filter(Boolean).join(" ")}
       onMouseMove={onMouseMove}
       onMouseLeave={() => setLens(null)}
     >
-      <label>
-        <input
-          aria-label={`${label} image`}
-          type="file"
-          accept={ACCEPT}
-          disabled={processing || disabled}
-          onChange={(event) => {
-            onPick(event.target.files);
-            event.target.value = "";
-          }}
-        />
+      <div>
         {file ? <img ref={imgRef} src={file.url} alt="" /> : <img className="upload-ai-glyph" src={`/upload-ai-design/${id}.png`} alt="" />}
         <span className="upload-ai-view-label">{label}</span>
-        {file ? null : <span className="upload-ai-view-add">Add image</span>}
-      </label>
-      {file && !processing ? (
-        <button type="button" className="upload-ai-view-remove" aria-label={`Remove ${label} image`} onClick={onRemove}>
-          ×
-        </button>
-      ) : null}
+      </div>
       {lens && file ? (
         <span
           className="upload-ai-lens"
@@ -481,11 +535,6 @@ function ViewSlot({
             backgroundPosition: `${lens.posX}px ${lens.posY}px`,
           }}
         />
-      ) : null}
-      {processing ? (
-        <div className="upload-ai-cutout" role="status" aria-label={`Removing background from ${label}`}>
-          <span className="upload-ai-cutout-spinner" />
-        </div>
       ) : null}
     </div>
   );

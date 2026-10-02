@@ -1,75 +1,61 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import sharp from "sharp";
+import { generateGptImageSheet } from "./magnific";
 import type { ArtworkView } from "./types";
 
-const IMAGE_MODEL = "gemini-3-pro-image";
-
 export const SHEET_VIEWS: ArtworkView[] = ["front", "back", "left", "right"];
-
-const CELL: Record<ArtworkView, string> = {
-  front: "top-left cell",
-  back: "top-right cell",
-  left: "bottom-right cell",
-  right: "bottom-left cell",
-};
 
 const ANGLE: Record<ArtworkView, string> = {
   front: "the FRONT of the garment, viewed straight on",
   back: "the BACK of the garment, viewed straight on, 180 degrees from the front",
-  left: "the empty garment's LEFT side as a true 90 degree profile, with nobody wearing it. In a front photo, that side is the one on the viewer's right",
-  right: "the empty garment's RIGHT side as a true 90 degree profile, with nobody wearing it. In a front photo, that side is the one on the viewer's left",
+  left: "the side of the empty garment that sits on the viewer's left in the front photo, as a true 90 degree profile, with nobody wearing it. Its front points toward the left edge of the cell",
+  right: "the side of the empty garment that sits on the viewer's right in the front photo, as a true 90 degree profile, with nobody wearing it. Its front points toward the right edge of the cell",
 };
 
-export interface SheetReference {
-  view: ArtworkView;
+export interface DesignReference {
   buffer: Buffer;
   mimeType: string;
 }
 
-export function buildSheetPrompt(supplied: ArtworkView[], missing: ArtworkView[]): string {
-  const suppliedLines = supplied
-    .map((view) => `- ${view.toUpperCase()} is attached. It is the source of truth for that angle. Redraw it in the ${CELL[view]} so it matches the other three cells. Do not paste the photo in with a caption.`)
-    .join("\n");
-  const missingLines = missing
-    .map((view) => `- ${CELL[view]} is not attached. Create ${ANGLE[view]}.`)
-    .join("\n");
-  const oneSideOnly =
-    supplied.includes("left") !== supplied.includes("right") &&
-    (missing.includes("left") || missing.includes("right"));
-  const contrast = oneSideOnly
-    ? "\nOne side was supplied and the other was not. The missing side is the opposite panel. Do not copy or mirror a mark that appears only on the supplied side.\n"
+export function buildSheetPrompt(referenceCount: number, instruction = ""): string {
+  const note = instruction.replace(/\s+/g, " ").trim().slice(0, 400);
+  const labeled = note.length > 0 && referenceCount === 4;
+  const names = Array.from({ length: referenceCount }, (_, index) => `Image ${index + 1}`).join(", ");
+  const attached = labeled
+    ? "Image 1 is the current front, Image 2 is the current back, Image 3 is the current left, and Image 4 is the current right."
+    : referenceCount === 1
+      ? `${names} is an unordered reference of one garment.`
+      : `${names} are unordered references of one garment. They are not in any particular order.`;
+  const edit = note
+    ? `\nLook-and-feel edit, apply it in every cell: ${note}\nKeep the same garment and the same angles. Change only what was asked.\n`
     : "";
+  const sameness = note
+    ? "- Keep the garment's construction and full length. Change the look only where the edit asks for a change."
+    : "- Same colors, materials, pattern, and scale in every cell. If a pattern wraps the garment, continue it around the form. A mark that appears on only one face stays on that face. Do not invent new marks.";
 
-  return `Redraw ONE garment as a clean 2x2 product sheet. The attached photos are references, labeled REFERENCE VIEW. Copy the garment type from those photos. It may be any apparel: a top, a bottom, a dress, outerwear, or anything else shown. Every cell is a new drawing of that same garment, including the angles that were uploaded, so all four match.
+  return `Redraw ONE garment as a clean 2x2 product sheet. ${attached} Look at each photo and decide what it shows. A photo may be the front, the back, a side, or another photo of an angle you already have. Copy the garment type from those photos. It may be any apparel: a top, a bottom, a dress, outerwear, or anything else shown. Then draw all four views of that same garment.
 
 Sheet layout, exactly one garment in each cell:
-- Top-left cell: the front, straight on. One garment.
-- Top-right cell: the back, straight on. One garment.
-- Bottom-left cell: the garment's right side. One empty garment in profile, with its front pointing toward the left edge of the cell.
-- Bottom-right cell: the garment's left side. One empty garment in profile, with its front pointing toward the right edge of the cell. The side that sits on the viewer's right in the front photo belongs in this cell.
+- Top-left cell: ${ANGLE.front}. One garment.
+- Top-right cell: ${ANGLE.back}. One garment.
+- Bottom-left cell: ${ANGLE.left}. One garment.
+- Bottom-right cell: ${ANGLE.right}. One garment.
 
-Attached references:
-${suppliedLines}
-
-Angles that were not uploaded:
-${missingLines}
-${contrast}
+The references are evidence, not cell assignments. Do not paste a photo into a cell with a caption. Redraw every cell, including an angle that a reference already shows, so all four match.
+${edit}
 Hard rules:
 - Each cell contains exactly one garment. Never draw two garments, a pair of profiles, or two angles together in one cell.
 - Keep the construction that is visible in the references: silhouette, openings, closures, length, and every part that is actually there. Do not add parts that are not there, and do not remove parts that are.
-- Plain white background in every cell and in the space between cells. No black background, no colored backdrop, and no shadow.
-- Keep every garment fully inside its own cell, with empty white space around it. Show the whole garment in each view, from its top edge to its bottom edge, at the same scale.
+- Plain white background in every cell. Draw a wide plain white cross through the exact center, horizontal and vertical, about one tenth of the sheet wide. No garment may touch or cross that white cross. No black background, no colored backdrop, and no shadow.
+- Draw each garment at full length, the same length as the reference, from its top edge to its bottom edge. The front and the back must include the bottom edge. Do not crop them, zoom in, or end them early. Leave a clear band of white under that bottom edge, before the white cross, and between the garment and the outer edge of its cell.
 - Do not draw any text, captions, parentheses, or view names. Marks that are already printed on the garment stay on the fabric.
-- Same colors, materials, pattern, and scale in every cell. If a pattern wraps the garment, continue it around the form. A mark that appears on only one face stays on that face. Do not invent new marks.
+${sameness}
 - The garment is empty. No person, mannequin, hanger, or body. Do not draw skin, a face, neck, chin, arms, or hands above, inside, or beside the garment.
 
 Output only the image.`;
 }
 
 function isGarmentPixel(red: number, green: number, blue: number): boolean {
-  const max = Math.max(red, green, blue);
-  const min = Math.min(red, green, blue);
-  return max - min > 28 && max > 45;
+  return red < 245 || green < 245 || blue < 245;
 }
 
 function contentFlags(data: Buffer, width: number, height: number, channels: number, axis: "row" | "column"): boolean[] {
@@ -128,8 +114,8 @@ export async function splitSheet(buffer: Buffer): Promise<Record<ArtworkView, Bu
   const boxes = {
     front: { left: 0, top: 0, width: gapX.start, height: gapY.start },
     back: { left: gapX.end, top: 0, width: width - gapX.end, height: gapY.start },
-    left: { left: gapX.end, top: gapY.end, width: width - gapX.end, height: height - gapY.end },
-    right: { left: 0, top: gapY.end, width: gapX.start, height: height - gapY.end },
+    left: { left: 0, top: gapY.end, width: gapX.start, height: height - gapY.end },
+    right: { left: gapX.end, top: gapY.end, width: width - gapX.end, height: height - gapY.end },
   };
 
   const entries = await Promise.all(
@@ -141,28 +127,12 @@ export async function splitSheet(buffer: Buffer): Promise<Record<ArtworkView, Bu
   return Object.fromEntries(entries) as Record<ArtworkView, Buffer>;
 }
 
-export async function generateMissingSheet(supplied: SheetReference[]): Promise<Partial<Record<ArtworkView, Buffer>>> {
-  if (supplied.length === 0) throw new Error("At least one uploaded view is required.");
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY is not set.");
+export async function generateMissingSheet(references: DesignReference[], instruction = ""): Promise<Record<ArtworkView, Buffer>> {
+  if (references.length === 0) throw new Error("At least one uploaded image is required.");
 
-  const suppliedViews = supplied.map((item) => item.view);
-  const missing = SHEET_VIEWS.filter((view) => !suppliedViews.includes(view));
-  if (missing.length === 0) return {};
-
-  const model = new GoogleGenerativeAI(apiKey).getGenerativeModel({ model: IMAGE_MODEL });
-  const parts = [
-    { text: buildSheetPrompt(suppliedViews, missing) },
-    ...supplied.flatMap((item) => [
-      { text: `REFERENCE VIEW: ${item.view.toUpperCase()}` },
-      { inlineData: { data: item.buffer.toString("base64"), mimeType: item.mimeType } },
-    ]),
-  ];
-  const result = await model.generateContent(parts);
-  const candidateParts = result.response.candidates?.[0]?.content?.parts ?? [];
-  const imagePart = candidateParts.find((part) => "inlineData" in part && part.inlineData?.data);
-  const data = imagePart && "inlineData" in imagePart ? imagePart.inlineData?.data : undefined;
-  if (!data) throw new Error("Gemini did not return an image.");
-
-  return splitSheet(Buffer.from(data, "base64"));
+  const sheet = await generateGptImageSheet(
+    buildSheetPrompt(references.length, instruction),
+    references.map((item) => ({ buffer: item.buffer, mimeType: item.mimeType })),
+  );
+  return splitSheet(sheet);
 }

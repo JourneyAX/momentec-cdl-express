@@ -3,10 +3,10 @@
 // precision upscale if the source is low-resolution) before it's used for
 // style matching and 3D baking.
 //
-// Scope note: this step touches the flat 2D reference photo only. It does
-// NOT vectorize the design or produce cut-piece geometry - see the CDL
-// Express journey doc's Track A/B split. Magnific's real capability here is
-// background removal + upscaling, nothing more.
+// Scope note: prepareArtwork touches the flat 2D reference photo only
+// (background removal + a faithful upscale). It does NOT vectorize the
+// design or produce cut-piece geometry. generateGptImageSheet is a separate
+// call used by the upload-design 2x2 sheet flow.
 //
 // Same key source + honest-fallback pattern as lib/gemini.ts: if
 // MAGNIFIC_API_KEY isn't set, or any call fails/times out, we fall back to
@@ -278,6 +278,63 @@ async function pollUpscale(apiKey: string, taskId: string): Promise<string> {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
   throw new Error("image-upscaler task did not complete within the timeout.");
+}
+
+const GPT_EDIT_POLL_MS = 150_000;
+
+export async function generateGptImageSheet(
+  prompt: string,
+  references: { buffer: Buffer; mimeType: string }[],
+): Promise<Buffer> {
+  const apiKey = process.env.MAGNIFIC_API_KEY;
+  if (!apiKey) throw new Error("MAGNIFIC_API_KEY is not set.");
+  if (references.length === 0) throw new Error("At least one reference image is required.");
+
+  const referenceImages = await Promise.all(
+    references.map((reference) => uploadToMagnific(apiKey, reference.buffer, reference.mimeType)),
+  );
+
+  const res = await fetch(`${BASE_URL}/v1/ai/text-to-image/gpt-image-2-edit`, {
+    method: "POST",
+    headers: { "x-magnific-api-key": apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt,
+      reference_images: referenceImages,
+      num_images: 1,
+      resolution: "1k",
+      aspect_ratio: "traditional_3_4",
+      quality: "low",
+      output_format: "png",
+      background: "opaque",
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`gpt-image-2-edit failed to start (${res.status}): ${text.slice(0, 300)}`);
+  }
+  const started: UpscaleTaskResponse = await res.json();
+  const url = await pollGptImageEdit(apiKey, started.data.task_id);
+  return downloadBuffer(url);
+}
+
+async function pollGptImageEdit(apiKey: string, taskId: string): Promise<string> {
+  const deadline = Date.now() + GPT_EDIT_POLL_MS;
+  while (Date.now() < deadline) {
+    const res = await fetch(`${BASE_URL}/v1/ai/text-to-image/gpt-image-2-edit/${taskId}`, {
+      headers: { "x-magnific-api-key": apiKey },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`gpt-image-2-edit status check failed (${res.status}): ${text.slice(0, 300)}`);
+    }
+    const data: UpscaleTaskResponse = await res.json();
+    if (data.data.status === "COMPLETED" && data.data.generated[0]) return data.data.generated[0];
+    if (data.data.status === "FAILED") {
+      throw new Error(`gpt-image-2-edit task failed: ${data.data.error || "unknown error"}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+  }
+  throw new Error("gpt-image-2-edit task did not complete within the timeout.");
 }
 
 async function downloadBuffer(url: string): Promise<Buffer> {
