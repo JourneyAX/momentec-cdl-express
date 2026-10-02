@@ -19,7 +19,7 @@ const MAX_REFERENCES = 8;
 type ViewId = (typeof VIEWS)[number]["id"];
 type ViewFile = { file: File; url: string; ready: boolean };
 type ViewMap = Record<ViewId, ViewFile | null>;
-type Reference = { id: string; file: File; url: string; ready: boolean };
+type Reference = { id: string; file: File; url: string; ready: boolean; source: File };
 
 const EMPTY_VIEWS: ViewMap = { front: null, back: null, left: null, right: null };
 
@@ -57,13 +57,6 @@ function pngFile(id: ViewId, base64: string) {
   return new File([bytes], `${id}-generated.png`, { type: "image/png" });
 }
 
-function filledLabels(views: ViewMap) {
-  const labels = VIEWS.filter((view) => views[view.id]).map((view) => view.label.toLowerCase());
-  if (labels.length < 2) return labels[0] ?? "";
-  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
-  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
-}
-
 export function UploadAiDesignModal() {
   const [open, setOpen] = useState(true);
   const [references, setReferences] = useState<Reference[]>([]);
@@ -75,6 +68,7 @@ export function UploadAiDesignModal() {
   const [editNote, setEditNote] = useState("");
   const [category, setCategory] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   const referencesRef = useRef(references);
   const viewsRef = useRef(views);
   const cutoutToken = useRef<Record<string, number>>({});
@@ -138,7 +132,7 @@ export function UploadAiDesignModal() {
     setReferences((current) => {
       const previous = current.find((item) => item.id === id);
       if (previous) URL.revokeObjectURL(previous.url);
-      const next = { id, file, url, ready };
+      const next = { id, file, url, ready, source: previous?.source ?? file };
       if (!previous) return [...current, next];
       return current.map((item) => (item.id === id ? next : item));
     });
@@ -267,20 +261,40 @@ export function UploadAiDesignModal() {
 
   const isRemovingBackground = Object.values(processing).some(Boolean);
   const hasReadyReference = references.some((item) => item.ready);
-  const inputsLocked = isRemovingBackground || generating;
+  const inputsLocked = isRemovingBackground || generating || preparing || submitted;
 
-  function onSubmit(event: FormEvent<HTMLFormElement>) {
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (fieldsLocked) return;
+    if (fieldsLocked || preparing) return;
     if (!VIEWS.every((view) => views[view.id]?.ready)) {
       setFileError("Make the four views before uploading the design.");
       return;
     }
-    setSubmitted(true);
+    const body = new FormData(event.currentTarget);
+    for (const view of VIEWS) {
+      const file = views[view.id]?.file;
+      if (file) body.append(view.id, file);
+    }
+    for (const item of referencesRef.current) body.append("upload", item.source);
+    setPreparing(true);
+    setFileError("");
+    try {
+      const response = await fetch("/api/upload-ai-design/submit", { method: "POST", body });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        setFileError(typeof payload?.error === "string" ? payload.error : "Could not send the design.");
+        return;
+      }
+      setSubmitted(true);
+    } catch {
+      setFileError("Could not prepare the art files.");
+    } finally {
+      setPreparing(false);
+    }
   }
 
   const viewCount = VIEWS.filter((view) => views[view.id]).length;
-  const fieldsLocked = viewCount < 4 || isRemovingBackground || generating;
+  const fieldsLocked = viewCount < 4 || isRemovingBackground || generating || preparing || submitted;
   const referenceLabel = references.length === 1 ? "1 image" : `${references.length} images`;
 
   if (!open) {
@@ -311,11 +325,6 @@ export function UploadAiDesignModal() {
             </div>
           </header>
 
-          {submitted ? (
-            <p className="upload-ai-thanks" role="status">
-              Received <strong>{filledLabels(views)}</strong>. Production-ready mockups are queued for approval within 24hrs.
-            </p>
-          ) : (
             <form onSubmit={onSubmit}>
               <div
                 className={["upload-ai-drop", dragOver ? "is-over" : ""].filter(Boolean).join(" ")}
@@ -395,13 +404,13 @@ export function UploadAiDesignModal() {
                       onChange={(event) => setEditNote(event.target.value)}
                     />
                   </label>
-                  <button type="button" className="upload-ai-generate" onClick={applyEdit} disabled={generating || editNote.trim().length === 0}>
+                  <button type="button" className="upload-ai-generate" onClick={applyEdit} disabled={generating || preparing || editNote.trim().length === 0}>
                     {generating ? "Making the views" : "Apply this edit"}
                   </button>
                 </div>
               ) : null}
               {viewCount < 4 && (generating || (hasReadyReference && !isRemovingBackground)) ? (
-                <button type="button" className="upload-ai-generate" onClick={generateRest} disabled={generating || isRemovingBackground}>
+                <button type="button" className="upload-ai-generate" onClick={generateRest} disabled={generating || preparing || isRemovingBackground}>
                   {generating ? "Making the views" : "Make the four views"}
                 </button>
               ) : null}
@@ -448,12 +457,22 @@ export function UploadAiDesignModal() {
               </label>
 
               <p className="upload-ai-required"><i>*</i>Required field</p>
-              <button className="upload-ai-submit" type="submit">
-                {isRemovingBackground ? "Removing background" : "Upload design"}
+              <button className={submitted ? "upload-ai-submit is-done" : "upload-ai-submit"} type="submit" disabled={preparing || submitted}>
+                {submitted ? (
+                  <>
+                    <span className="upload-ai-tick" aria-hidden="true">✓</span>
+                    Design uploaded successfully
+                  </>
+                ) : preparing ? (
+                  "Sending"
+                ) : isRemovingBackground ? (
+                  "Removing background"
+                ) : (
+                  "Upload design"
+                )}
               </button>
               </fieldset>
             </form>
-          )}
         </section>
       </div>
     </main>

@@ -21,3 +21,5 @@ tsconfig.tsbuildinfo
 .cursor/*
 graphify-out/*
 scratch/*
+assets/upload-ai-design/
+assets/user-uploaded/

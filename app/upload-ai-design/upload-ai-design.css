@@ -347,8 +347,7 @@
 
 .upload-ai-views-meta,
 .upload-ai-file-error,
-.upload-ai-required,
-.upload-ai-thanks {
+.upload-ai-required {
   font-family: var(--font);
   text-transform: none;
   font-weight: 400;
@@ -514,6 +513,20 @@
   cursor: wait;
 }
 
+.upload-ai-submit.is-done,
+.upload-ai-submit.is-done:disabled {
+  opacity: 1;
+  cursor: default;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.upload-ai-tick {
+  color: #3ddc84;
+  margin-right: 8px;
+  font-size: 18px;
+}
+
 @media (max-width: 480px) {
   .upload-ai-backdrop {
     padding: 10px 12px;
@@ -545,9 +558,3 @@
   transform: translate(-50%, -50%);
 }
 
-.upload-ai-thanks {
-  margin: 28px 0 8px;
-  font-size: 15px;
-  line-height: 1.5;
-  color: #333;
-}
