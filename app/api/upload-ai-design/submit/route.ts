@@ -1,6 +1,6 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { buildAssetSvgs, type AssetSource } from "@/lib/upload-ai-assets";
-import { buildAssetZip, createOrder, markFailed, saveUserUploads, uploadFilename, type DesignFields, type UserUpload } from "@/lib/upload-ai-orders";
+import { buildAssetZip, createOrder, markFailed, markReceived, saveUserUploads, uploadFilename, type DesignFields, type UserUpload } from "@/lib/upload-ai-orders";
 import { SHEET_VIEWS } from "@/lib/upload-ai-sheet";
 
 export const runtime = "nodejs";
@@ -55,8 +55,7 @@ export async function POST(req: NextRequest) {
   const id = crypto.randomUUID();
   await createOrder(id, fields);
   await saveUserUploads(id, uploads);
-  const origin = req.nextUrl.origin;
-  after(() => deliver(origin, id, fields, sources, uploads, model));
+  after(() => deliver(id, fields, sources, uploads, model));
   return NextResponse.json({ id }, { status: 202 });
 }
 
@@ -64,7 +63,7 @@ function text(value: FormDataEntryValue | null): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-async function deliver(origin: string, id: string, fields: DesignFields, sources: AssetSource[], uploads: UserUpload[], model?: Buffer): Promise<void> {
+async function deliver(id: string, fields: DesignFields, sources: AssetSource[], uploads: UserUpload[], model?: Buffer): Promise<void> {
   try {
     const { files, failed } = await buildAssetSvgs(sources);
     if (files.length === 0) {
@@ -72,16 +71,8 @@ async function deliver(origin: string, id: string, fields: DesignFields, sources
       return;
     }
     const zip = await buildAssetZip(sources, files, fields, failed, uploads, model);
-    const body = new FormData();
-    body.set("id", id);
-    body.set("category", fields.category);
-    body.set("name", fields.name);
-    body.set("email", fields.email);
-    body.set("message", fields.message);
-    body.set("failed", JSON.stringify(failed));
-    body.set("archive", new Blob([new Uint8Array(zip)], { type: "application/zip" }), `${id}.zip`);
-    const response = await fetch(`${origin}/api/upload-ai-design/intake`, { method: "POST", body });
-    if (!response.ok) await markFailed(id, "The art package could not be delivered.");
+    const saved = await markReceived(id, zip, failed, fields);
+    if (!saved) await markFailed(id, "The art package could not be delivered.");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not prepare the art files.";
     console.error("upload-ai-design submit failed:", message);
