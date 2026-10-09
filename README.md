@@ -9,7 +9,9 @@ WHAT THE APP DOES
 A customer drops one design photo.
 The app removes the background, then builds front, back, left, and right views of that garment.
 The customer can open a beta 3D view of those four pictures.
-Upload design builds a proof PDF and the browser downloads it. The button shows "Submitting proof" and a percent while that runs. The PDF is the result. It is not saved as an order.
+Upload design builds a proof PDF and the browser downloads it. The PDF is the result. It is not saved as an order.
+
+The button shows "Submitting proof" and a percent while that runs. That wait is only for this proof of concept, so we can demonstrate the PDF being built in front of the customer. In the real product the customer will upload and leave. They will not sit on the button. The proof still waits on Gemini and then on each Magnific image, so in this demo it can take a few minutes. The percent is there so the person watching can see the request is still working and how far along it is, instead of a button that looks stuck. The number moves when a step finishes: reading the sheet, then each image, then building the PDF. It reaches 100 when the file is ready to download.
 
 
 WHAT IS DONE
