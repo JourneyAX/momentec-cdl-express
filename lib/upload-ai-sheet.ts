@@ -1,7 +1,8 @@
 import sharp from "sharp";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { generateGptImageSheet, uploadToMagnific } from "./magnific";
-import type { ArtworkView } from "./types";
+
+export type ArtworkView = "front" | "back" | "left" | "right";
 
 export const SHEET_VIEWS: ArtworkView[] = ["front", "back", "left", "right"];
 

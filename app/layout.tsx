@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Momentec CDL Express",
-  description: "Submit your AI-generated jersey design, match it to a real Momentec/Augusta style, and preview it in 3D.",
+  title: "Upload your AI design",
+  description: "Drag and drop your AI generated design and get production-ready mockups for approval within 24hrs at no charge.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

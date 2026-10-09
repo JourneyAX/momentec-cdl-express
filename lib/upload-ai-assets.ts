@@ -2,7 +2,7 @@ import "server-only";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { ArtworkView } from "./types";
+import type { ArtworkView } from "./upload-ai-sheet";
 
 const MCP_URL = "https://mcp.magnific.com/mcp";
 const TOKEN_URL = "https://auth.magnific.com/realms/mcp/protocol/openid-connect/token";

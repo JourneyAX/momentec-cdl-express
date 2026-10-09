@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateMissingSheet, SHEET_VIEWS, type DesignReference } from "@/lib/upload-ai-sheet";
-import type { ArtworkView } from "@/lib/types";
+import { generateMissingSheet, SHEET_VIEWS, type ArtworkView, type DesignReference } from "@/lib/upload-ai-sheet";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;

@@ -2,7 +2,7 @@
   "name": "momentec-cdl-express",
   "version": "0.1.0",
   "private": true,
-  "description": "Momentec CDL Express - customer AI-design submission, style match, and 3D preview app. Standalone Next.js app, not part of the JourneyAX/Caroma-Poc monorepo.",
+  "description": "Upload an AI design and download a proof PDF.",
   "scripts": {
     "dev": "next dev -p 3200",
     "build": "next build",
@@ -14,8 +14,6 @@
     "@google/generative-ai": "^0.21.0",
     "@imgly/background-removal": "^1.7.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@vercel/blob": "^2.8.0",
-    "jszip": "^3.10.1",
     "next": "15.5.23",
     "pdfkit": "^0.20.2",
     "react": "^19.0.0",
