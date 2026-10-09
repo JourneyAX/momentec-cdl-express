@@ -32,13 +32,13 @@ export async function POST(req: NextRequest) {
   const instruction = typeof instructionValue === "string" ? instructionValue : "";
 
   try {
-    const images = await generateMissingSheet(references, instruction);
+    const { sheet, views } = await generateMissingSheet(references, instruction);
     const encoded: Partial<Record<ArtworkView, string>> = {};
     for (const view of SHEET_VIEWS) {
-      const png = images[view];
+      const png = views[view];
       if (png) encoded[view] = png.toString("base64");
     }
-    return NextResponse.json({ images: encoded });
+    return NextResponse.json({ images: encoded, sheet: sheet.toString("base64") });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Could not generate the other views.";
     console.error("upload-ai-design generate failed:", message);

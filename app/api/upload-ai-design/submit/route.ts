@@ -1,81 +1,36 @@
-import { after, NextRequest, NextResponse } from "next/server";
-import { buildAssetSvgs, type AssetSource } from "@/lib/upload-ai-assets";
-import { buildAssetZip, createOrder, markFailed, markReceived, saveUserUploads, uploadFilename, type DesignFields, type UserUpload } from "@/lib/upload-ai-orders";
-import { SHEET_VIEWS } from "@/lib/upload-ai-sheet";
+import { NextRequest, NextResponse } from "next/server";
+import { buildProofPdf } from "@/lib/upload-ai-proof-pdf";
+import { extractDecorations } from "@/lib/upload-ai-sheet";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const MIME: Record<string, string> = {
-  "image/png": "image/png",
-  "image/jpeg": "image/jpeg",
-  "image/jpg": "image/jpeg",
-  "image/webp": "image/webp",
-};
-
 export async function POST(req: NextRequest) {
   const form = await req.formData().catch(() => null);
-  if (!form) return NextResponse.json({ error: "Upload the four views first." }, { status: 400 });
+  if (!form) return NextResponse.json({ error: "Make the four views first." }, { status: 400 });
 
-  const fields: DesignFields = {
-    category: text(form.get("category")),
-    name: text(form.get("name")),
-    email: text(form.get("email")),
-    message: text(form.get("message")),
-  };
-  if (!fields.category || !fields.name || !fields.email) {
-    return NextResponse.json({ error: "Category, name, and email are required." }, { status: 400 });
+  const sheetFile = form.get("sheet");
+  if (!(sheetFile instanceof File) || sheetFile.size === 0) {
+    return NextResponse.json({ error: "Make the four views first." }, { status: 400 });
   }
 
-  const sources: AssetSource[] = [];
-  for (const view of SHEET_VIEWS) {
-    const value = form.get(view);
-    if (!(value instanceof File) || value.size === 0) continue;
-    const mimeType = MIME[value.type];
-    if (!mimeType) return NextResponse.json({ error: "Use a jpg, png, or webp image." }, { status: 400 });
-    sources.push({ view, buffer: Buffer.from(await value.arrayBuffer()), mimeType });
-  }
-  if (sources.length < SHEET_VIEWS.length) {
-    return NextResponse.json({ error: "Make the four views before uploading the design." }, { status: 400 });
-  }
-
-  const uploads: UserUpload[] = [];
-  for (const value of form.getAll("upload")) {
-    if (!(value instanceof File) || value.size === 0) continue;
-    if (!MIME[value.type]) return NextResponse.json({ error: "Use a jpg, png, or webp image." }, { status: 400 });
-    uploads.push({
-      filename: uploadFilename(value.name, uploads.length),
-      buffer: Buffer.from(await value.arrayBuffer()),
-    });
-  }
-
-  const modelFile = form.get("model");
-  const model = modelFile instanceof File && modelFile.size > 0 ? Buffer.from(await modelFile.arrayBuffer()) : undefined;
-
-  const id = crypto.randomUUID();
-  await createOrder(id, fields);
-  await saveUserUploads(id, uploads);
-  after(() => deliver(id, fields, sources, uploads, model));
-  return NextResponse.json({ id }, { status: 202 });
-}
-
-function text(value: FormDataEntryValue | null): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-async function deliver(id: string, fields: DesignFields, sources: AssetSource[], uploads: UserUpload[], model?: Buffer): Promise<void> {
   try {
-    const { files, failed } = await buildAssetSvgs(sources);
-    if (files.length === 0) {
-      await markFailed(id, "Magnific did not return vector SVG files.");
-      return;
-    }
-    const zip = await buildAssetZip(sources, files, fields, failed, uploads, model);
-    const saved = await markReceived(id, zip, failed, fields);
-    if (!saved) await markFailed(id, "The art package could not be delivered.");
+    const extracted = await extractDecorations(Buffer.from(await sheetFile.arrayBuffer()));
+    const pdf = await buildProofPdf(extracted, extracted.images);
+    return new NextResponse(new Uint8Array(pdf), {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": 'attachment; filename="proof.pdf"',
+      },
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not prepare the art files.";
-    console.error("upload-ai-design submit failed:", message);
-    await markFailed(id, message === "Magnific MCP credentials are not configured." ? message : "Could not prepare the art files.");
+    const message = error instanceof Error ? error.message : "Could not make the proof.";
+    console.error("upload-ai-design proof failed:", message);
+    const missing = message === "MAGNIFIC_API_KEY is not set." || message === "GEMINI_API_KEY is not set.";
+    const credits = message.startsWith("Magnific could not charge credits");
+    return NextResponse.json(
+      { error: missing || credits ? message : "Could not make the proof." },
+      { status: missing ? 503 : 502 },
+    );
   }
 }

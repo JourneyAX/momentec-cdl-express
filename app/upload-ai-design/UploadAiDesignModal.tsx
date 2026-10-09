@@ -53,7 +53,7 @@ function categoryLabel(value: string) {
   return value.toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function pngFile(id: ViewId, base64: string) {
+function pngFile(id: string, base64: string) {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
@@ -70,10 +70,8 @@ export function UploadAiDesignModal() {
   const [generating, setGenerating] = useState(false);
   const [editNote, setEditNote] = useState("");
   const [category, setCategory] = useState("");
-  const [submitted, setSubmitted] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [modelUrl, setModelUrl] = useState<string | null>(null);
-  const [modelFile, setModelFile] = useState<File | null>(null);
   const [showingModel, setShowingModel] = useState(false);
   const [makingModel, setMakingModel] = useState(false);
   const referencesRef = useRef(references);
@@ -81,6 +79,7 @@ export function UploadAiDesignModal() {
   const cutoutToken = useRef<Record<string, number>>({});
   const modelToken = useRef(0);
   const modelUrlRef = useRef<string | null>(null);
+  const sheetRef = useRef<File | null>(null);
   referencesRef.current = references;
   viewsRef.current = views;
 
@@ -117,6 +116,7 @@ export function UploadAiDesignModal() {
     }
     setReferences([]);
     setViews(EMPTY_VIEWS);
+    sheetRef.current = null;
     clearModel();
   }
 
@@ -125,13 +125,11 @@ export function UploadAiDesignModal() {
     if (modelUrlRef.current) URL.revokeObjectURL(modelUrlRef.current);
     modelUrlRef.current = null;
     setModelUrl(null);
-    setModelFile(null);
     setShowingModel(false);
     setMakingModel(false);
   }
 
   function reopen() {
-    setSubmitted(false);
     clearDesign();
     setFileError("");
     setEditNote("");
@@ -224,6 +222,7 @@ export function UploadAiDesignModal() {
         return;
       }
       const images = payload?.images ?? {};
+      if (typeof payload?.sheet === "string") sheetRef.current = pngFile("sheet", payload.sheet);
       const created = VIEWS.flatMap((view) => {
         const encoded = images[view.id];
         if (typeof encoded !== "string") return [];
@@ -278,6 +277,7 @@ export function UploadAiDesignModal() {
       if (view) URL.revokeObjectURL(view.url);
     }
     setViews(EMPTY_VIEWS);
+    sheetRef.current = null;
     setEditNote("");
     clearModel();
   }
@@ -305,10 +305,8 @@ export function UploadAiDesignModal() {
       }
       const blob = await response.blob();
       if (modelToken.current !== token) return;
-      const file = new File([blob], "model.glb", { type: "model/gltf-binary" });
-      const url = URL.createObjectURL(file);
+      const url = URL.createObjectURL(blob);
       modelUrlRef.current = url;
-      setModelFile(file);
       setModelUrl(url);
       setShowingModel(true);
     } catch {
@@ -320,41 +318,43 @@ export function UploadAiDesignModal() {
 
   const isRemovingBackground = Object.values(processing).some(Boolean);
   const hasReadyReference = references.some((item) => item.ready);
-  const inputsLocked = isRemovingBackground || generating || preparing || submitted;
+  const inputsLocked = isRemovingBackground || generating || preparing;
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (fieldsLocked || preparing) return;
-    if (!VIEWS.every((view) => views[view.id]?.ready)) {
+    const sheet = sheetRef.current;
+    if (!sheet || !VIEWS.every((view) => views[view.id]?.ready)) {
       setFileError("Make the four views before uploading the design.");
       return;
     }
-    const body = new FormData(event.currentTarget);
-    for (const view of VIEWS) {
-      const file = views[view.id]?.file;
-      if (file) body.append(view.id, file);
-    }
-    for (const item of referencesRef.current) body.append("upload", item.source);
-    if (modelFile) body.append("model", modelFile);
+    const body = new FormData();
+    body.append("sheet", sheet);
     setPreparing(true);
     setFileError("");
     try {
       const response = await fetch("/api/upload-ai-design/submit", { method: "POST", body });
-      const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        setFileError(typeof payload?.error === "string" ? payload.error : "Could not send the design.");
+        const payload = await response.json().catch(() => null);
+        setFileError(typeof payload?.error === "string" ? payload.error : "Could not make the proof.");
         return;
       }
-      setSubmitted(true);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "proof.pdf";
+      link.click();
+      URL.revokeObjectURL(url);
     } catch {
-      setFileError("Could not prepare the art files.");
+      setFileError("Could not make the proof.");
     } finally {
       setPreparing(false);
     }
   }
 
   const viewCount = VIEWS.filter((view) => views[view.id]).length;
-  const fieldsLocked = viewCount < 4 || isRemovingBackground || generating || preparing || submitted;
+  const fieldsLocked = viewCount < 4 || isRemovingBackground || generating || preparing;
   const referenceLabel = references.length === 1 ? "1 image" : `${references.length} images`;
 
   if (!open) {
@@ -535,19 +535,8 @@ export function UploadAiDesignModal() {
               </label>
 
               <p className="upload-ai-required"><i>*</i>Required field</p>
-              <button className={submitted ? "upload-ai-submit is-done" : "upload-ai-submit"} type="submit" disabled={preparing || submitted}>
-                {submitted ? (
-                  <>
-                    <span className="upload-ai-tick" aria-hidden="true">✓</span>
-                    Design uploaded successfully
-                  </>
-                ) : preparing ? (
-                  "Sending"
-                ) : isRemovingBackground ? (
-                  "Removing background"
-                ) : (
-                  "Upload design"
-                )}
+              <button className="upload-ai-submit" type="submit" disabled={preparing}>
+                {preparing ? "Making the proof" : isRemovingBackground ? "Removing background" : "Upload design"}
               </button>
               </fieldset>
             </form>

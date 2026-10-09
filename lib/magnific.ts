@@ -285,36 +285,51 @@ const GPT_EDIT_POLL_MS = 150_000;
 export async function generateGptImageSheet(
   prompt: string,
   references: { buffer: Buffer; mimeType: string }[],
+  options?: { aspectRatio?: string; referenceUrls?: string[] },
 ): Promise<Buffer> {
   const apiKey = process.env.MAGNIFIC_API_KEY;
   if (!apiKey) throw new Error("MAGNIFIC_API_KEY is not set.");
   if (references.length === 0) throw new Error("At least one reference image is required.");
 
-  const referenceImages = await Promise.all(
-    references.map((reference) => uploadToMagnific(apiKey, reference.buffer, reference.mimeType)),
-  );
+  const referenceImages = options?.referenceUrls?.length
+    ? options.referenceUrls
+    : await Promise.all(references.map((reference) => uploadToMagnific(apiKey, reference.buffer, reference.mimeType)));
 
-  const res = await fetch(`${BASE_URL}/v1/ai/text-to-image/gpt-image-2-edit`, {
-    method: "POST",
-    headers: { "x-magnific-api-key": apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      reference_images: referenceImages,
-      num_images: 1,
-      resolution: "1k",
-      aspect_ratio: "traditional_3_4",
-      quality: "low",
-      output_format: "png",
-      background: "opaque",
-    }),
+  const started = await startGptImageEdit(apiKey, {
+    prompt,
+    reference_images: referenceImages,
+    num_images: 1,
+    resolution: "1k",
+    aspect_ratio: options?.aspectRatio ?? "traditional_3_4",
+    quality: "low",
+    output_format: "png",
+    background: "opaque",
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`gpt-image-2-edit failed to start (${res.status}): ${text.slice(0, 300)}`);
-  }
-  const started: UpscaleTaskResponse = await res.json();
   const url = await pollGptImageEdit(apiKey, started.data.task_id);
   return downloadBuffer(url);
+}
+
+async function startGptImageEdit(apiKey: string, body: Record<string, unknown>): Promise<UpscaleTaskResponse> {
+  let lastStatus = 0;
+  let lastText = "";
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const res = await fetch(`${BASE_URL}/v1/ai/text-to-image/gpt-image-2-edit`, {
+      method: "POST",
+      headers: { "x-magnific-api-key": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return (await res.json()) as UpscaleTaskResponse;
+    lastStatus = res.status;
+    lastText = await res.text().catch(() => "");
+    if (!lastText.includes("Error consuming credits") || attempt === 1) break;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+  if (lastText.includes("Error consuming credits")) {
+    throw new Error(
+      "Magnific could not charge credits for this image edit. Try the download again in a moment. If it keeps failing, top up the Magnific API credits.",
+    );
+  }
+  throw new Error(`gpt-image-2-edit failed to start (${lastStatus}): ${lastText.slice(0, 300)}`);
 }
 
 async function pollGptImageEdit(apiKey: string, taskId: string): Promise<string> {
