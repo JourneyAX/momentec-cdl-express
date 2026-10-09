@@ -315,9 +315,11 @@ export async function extractDecorations(sheet: Buffer): Promise<ExtractedDecora
     })),
   ];
   const images = new Map<string, Buffer>();
-  for (let index = 0; index < jobs.length; index += 2) {
+  const midpoint = Math.ceil(jobs.length / 2);
+  const waves = [jobs.slice(0, midpoint), jobs.slice(midpoint)].filter((wave) => wave.length > 0);
+  for (const wave of waves) {
     const batch = await Promise.all(
-      jobs.slice(index, index + 2).map(async (job) => {
+      wave.map(async (job) => {
         const png = await generateGptImageSheet(job.prompt, [{ buffer: sheet, mimeType: "image/png" }], {
           aspectRatio: job.aspectRatio,
           referenceUrls: [referenceUrl],
