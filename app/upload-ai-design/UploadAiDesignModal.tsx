@@ -564,7 +564,7 @@ export function UploadAiDesignModal() {
 
               <p className="upload-ai-required"><i>*</i>Required field</p>
               <button className="upload-ai-submit" type="submit" disabled={preparing}>
-                {preparing ? `${proofProgress}%` : isRemovingBackground ? "Removing background" : "Upload design"}
+                {preparing ? `Submitting proof ${proofProgress}%` : isRemovingBackground ? "Removing background" : "Upload design"}
               </button>
               </fieldset>
             </form>
