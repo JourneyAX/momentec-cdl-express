@@ -6,19 +6,10 @@ This note is written in plain text so it can be shared as a .txt file.
 
 WHAT THE APP DOES
 
-A customer drops one design photo at http://localhost:3200.
+A customer drops one design photo.
 The app removes the background, then builds front, back, left, and right views of that garment.
 The customer can open a beta 3D view of those four pictures.
-Upload design builds a proof PDF and the browser downloads it. The PDF is the result. It is not saved as an order.
-
-
-HOW TO RUN
-
-npm install
-npm run dev
-
-Open http://localhost:3200.
-The Magnific and Gemini keys live in the local env file. Do not commit that file.
+Upload design builds a proof PDF and the browser downloads it. The button shows "Submitting proof" and a percent while that runs. The PDF is the result. It is not saved as an order.
 
 
 WHAT IS DONE
@@ -60,6 +51,9 @@ Every mark is labeled 1.5 inch. Offsets are all zero. Real width, height, and pl
 
 Customer form.
 Category, name, email, and message are collected on the page. They are not written into the PDF.
+
+Vercel free plan.
+Proof PDF generation can fail on a Vercel Hobby (free) account. The proof waits on Gemini and then on many Magnific image edits. That work can run longer than the free plan allows for one request, so Upload design can error even when the same flow succeeds elsewhere.
 
 
 HARDCODED VALUES TO REPLACE
