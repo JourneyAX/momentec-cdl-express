@@ -296,8 +296,13 @@ function viewPrompt(view: ArtworkView): string {
 
 export type ExtractedDecorations = DecorationList & { images: Map<string, Buffer> };
 
-export async function extractDecorations(sheet: Buffer): Promise<ExtractedDecorations> {
+export async function extractDecorations(
+  sheet: Buffer,
+  onProgress?: (percent: number) => void,
+): Promise<ExtractedDecorations> {
+  onProgress?.(8);
   const listed = await listDecorations(sheet);
+  onProgress?.(18);
   const used = new Set<string>();
   const briefs = [...listed.teamDecoration, ...listed.rosterDecoration].map((brief, index) => ({
     ...brief,
@@ -306,6 +311,7 @@ export async function extractDecorations(sheet: Buffer): Promise<ExtractedDecora
   const apiKey = process.env.MAGNIFIC_API_KEY;
   if (!apiKey) throw new Error("MAGNIFIC_API_KEY is not set.");
   const referenceUrl = await uploadToMagnific(apiKey, sheet, "image/png");
+  onProgress?.(22);
   const jobs = [
     ...(["front", "back"] as const).map((view) => ({
       name: `${view}.png`,
@@ -323,15 +329,21 @@ export async function extractDecorations(sheet: Buffer): Promise<ExtractedDecora
   const images = new Map<string, Buffer>();
   const midpoint = Math.ceil(jobs.length / 2);
   const waves = [jobs.slice(0, midpoint), jobs.slice(midpoint)].filter((wave) => wave.length > 0);
+  let finished = 0;
   for (const wave of waves) {
     const batch = await Promise.all(
       wave.map(async (job) => {
-        const png = await generateGptImageSheet(job.prompt, [{ buffer: sheet, mimeType: "image/png" }], {
-          aspectRatio: job.aspectRatio,
-          referenceUrls: [referenceUrl],
-        });
-        if (job.dropIfWhite && (await isMostlyWhite(png))) return null;
-        return { name: job.name, png };
+        try {
+          const png = await generateGptImageSheet(job.prompt, [{ buffer: sheet, mimeType: "image/png" }], {
+            aspectRatio: job.aspectRatio,
+            referenceUrls: [referenceUrl],
+          });
+          if (job.dropIfWhite && (await isMostlyWhite(png))) return null;
+          return { name: job.name, png };
+        } finally {
+          finished += 1;
+          if (jobs.length > 0) onProgress?.(22 + Math.round((finished / jobs.length) * 72));
+        }
       }),
     );
     for (const item of batch) {

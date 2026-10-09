@@ -26,6 +26,30 @@ type Reference = { id: string; file: File; url: string; ready: boolean; source: 
 
 const EMPTY_VIEWS: ViewMap = { front: null, back: null, left: null, right: null };
 
+async function readProofProgress(response: Response, onProgress: (percent: number) => void): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Could not make the proof.");
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let pdf = "";
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const message = JSON.parse(line) as { progress?: number; pdf?: string; error?: string };
+      if (message.error) throw new Error(message.error);
+      if (typeof message.progress === "number") onProgress(message.progress);
+      if (message.pdf) pdf = message.pdf;
+    }
+  }
+  if (!pdf) throw new Error("Could not make the proof.");
+  return pdf;
+}
+
 const CATEGORIES = [
   "CORPORATE APPAREL",
   "ACCESSORIES",
@@ -71,6 +95,7 @@ export function UploadAiDesignModal() {
   const [editNote, setEditNote] = useState("");
   const [category, setCategory] = useState("");
   const [preparing, setPreparing] = useState(false);
+  const [proofProgress, setProofProgress] = useState(0);
   const [modelUrl, setModelUrl] = useState<string | null>(null);
   const [showingModel, setShowingModel] = useState(false);
   const [makingModel, setMakingModel] = useState(false);
@@ -331,6 +356,7 @@ export function UploadAiDesignModal() {
     const body = new FormData();
     body.append("sheet", sheet);
     setPreparing(true);
+    setProofProgress(0);
     setFileError("");
     try {
       const response = await fetch("/api/upload-ai-design/submit", { method: "POST", body });
@@ -339,17 +365,19 @@ export function UploadAiDesignModal() {
         setFileError(typeof payload?.error === "string" ? payload.error : "Could not make the proof.");
         return;
       }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
+      const pdf = await readProofProgress(response, setProofProgress);
+      const bytes = Uint8Array.from(atob(pdf), (char) => char.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
       const link = document.createElement("a");
       link.href = url;
       link.download = "proof.pdf";
       link.click();
       URL.revokeObjectURL(url);
-    } catch {
-      setFileError("Could not make the proof.");
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : "Could not make the proof.");
     } finally {
       setPreparing(false);
+      setProofProgress(0);
     }
   }
 
@@ -536,7 +564,7 @@ export function UploadAiDesignModal() {
 
               <p className="upload-ai-required"><i>*</i>Required field</p>
               <button className="upload-ai-submit" type="submit" disabled={preparing}>
-                {preparing ? "Making the proof" : isRemovingBackground ? "Removing background" : "Upload design"}
+                {preparing ? `${proofProgress}%` : isRemovingBackground ? "Removing background" : "Upload design"}
               </button>
               </fieldset>
             </form>
