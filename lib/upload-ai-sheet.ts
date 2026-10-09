@@ -7,10 +7,10 @@ export type ArtworkView = "front" | "back" | "left" | "right";
 export const SHEET_VIEWS: ArtworkView[] = ["front", "back", "left", "right"];
 
 const ANGLE: Record<ArtworkView, string> = {
-  front: "the FRONT elevation of that one 3D garment, orthographic, straight on",
-  back: "the BACK elevation of the same 3D garment, orthographic, turned 180 degrees from the front",
-  left: "the LEFT elevation of the same 3D garment, a true 90 degree orthographic side. This is the side that sits on the viewer's left in the front view, and its front points toward the left edge of the cell",
-  right: "the RIGHT elevation of the same 3D garment, a true 90 degree orthographic side. This is the side that sits on the viewer's right in the front view, and its front points toward the right edge of the cell",
+  front: "the FRONT of that one solid 3D garment, orthographic, straight on. The chest faces the camera. Sleeves have thickness and come slightly forward. The collar is an opening, not a flat ring",
+  back: "the BACK of the same solid 3D garment, orthographic, turned 180 degrees. The back panel faces the camera. Sleeves keep the same thickness. The collar opening is still a hole",
+  left: "the LEFT side of the same solid 3D garment, a true 90 degree turn. This is the side on the viewer's left in the front view, and the front of the garment points toward the left edge of the cell. Show the depth of the torso and the sleeve as a form, not a paper-thin outline",
+  right: "the RIGHT side of the same solid 3D garment, a true 90 degree turn. This is the side on the viewer's right in the front view, and the front of the garment points toward the right edge of the cell. Show the depth of the torso and the sleeve as a form, not a paper-thin outline",
 };
 
 export interface DesignReference {
@@ -34,9 +34,9 @@ export function buildSheetPrompt(referenceCount: number, instruction = ""): stri
     ? "- Keep the garment's construction and full length. Change the look only where the edit asks for a change."
     : "- Same colors, materials, pattern, and scale in every cell. If a pattern wraps the garment, continue it around the form. A mark that appears on only one face stays on that face. Do not invent new marks.";
 
-  return `Redraw ONE garment as a clean 2x2 product sheet of a single 3D model. ${attached} Look at each photo and decide what it shows. A photo may be the front, the back, a side, or another photo of an angle you already have. Copy the garment type from those photos. It may be any apparel: a top, a bottom, a dress, outerwear, or anything else shown. Then render all four elevations of that same 3D garment.
+  return `Redraw ONE garment as a clean 2x2 product sheet of a single 3D model. ${attached} Look at each photo and decide what it shows. A photo may be the front, the back, a side, or another photo of an angle you already have. Copy the garment type from those photos. It may be any apparel: a top, a bottom, a dress, outerwear, or anything else shown. Then render all four views of that same solid 3D garment.
 
-The four cells are four orthographic renders of one 3D model, turned in 90 degree steps. Use the same scale, the same camera distance, the same vertical placement, and flat even lighting in every cell. No strong perspective. A side view is that model rotated, not a new garment.
+The four cells are four views of one 3D object, turned in 90 degree steps. Same scale, same camera distance, same vertical placement. The camera is orthographic, with no wide-angle lens and no dramatic perspective. The garment itself is not flat: it has volume, sleeve depth, a side wall, and an open collar or waist. Soft studio light shows that form. Do not draw a flat vector, a paper cutout, or a print sitting on a silhouette. A side view is that same model rotated, so you see its thickness.
 
 Sheet layout, exactly one garment in each cell:
 - Top-left cell: ${ANGLE.front}. One garment.
