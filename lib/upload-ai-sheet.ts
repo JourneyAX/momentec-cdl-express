@@ -160,9 +160,15 @@ Also name the colors you can see.
 
 fillColors are the garment fabric only. Not the printed marks, and not the white sheet background. primary is the main body color. second is the next fabric color only when the sleeves, side panels, or trim are a different color. third is another fabric color only when a third one is actually there. One fabric color means one entry.
 
-Each decoration has colors: the inks in that one mark, not the fabric behind it. Include a white or light outline when it is part of the mark.
+Each decoration colors array is only the inks that draw that one mark. Look inside its own strokes, fills, and outlines. A color counts only when a patch of it is part of the printed shape. The cloth around the mark, a shadow, and the fuzzy edge where the ink meets the fabric do not count.
 
-Every color has a short uppercase name for what you see, and a hex of #RRGGBB matched to the pixels in this image. Do not invent a brand palette.
+Do not copy a garment fill color into a mark. Body, sleeve, and trim colors stay in fillColors. Put a fill color on a mark only when that mark is itself printed as a solid shape in that same color. Do not add a color because you recognize the mark, and do not use the colors that kind of mark usually has. Do not borrow an ink from a different mark on the same garment. Use only the pixels of this mark in this image.
+
+White counts only when it is a drawn stroke or outline of the mark. The sheet background and the empty gaps inside a mark are not inks.
+
+Merge shades of the same ink into one entry. One printed ink means one color. Two clearly different inks means two colors. If you are unsure a color is really in the mark, leave it out.
+
+Every color has a short uppercase name for what you see, and a hex of #RRGGBB matched to those pixels.
 
 Return ONLY strict JSON, no markdown fences:
 {
