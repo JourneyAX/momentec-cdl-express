@@ -4,7 +4,6 @@ import PDFDocument from "pdfkit";
 import sharp from "sharp";
 
 const PAGE_W = 612;
-const PAGE1_H = 900;
 const LETTER_H = 792;
 const BLUE = "#1A78C2";
 const CYAN = "#1A9BC7";
@@ -51,27 +50,46 @@ export function decorationAssetName(group: string, view: string): string {
   return `${stem || "mark"}.png`;
 }
 
+const IMAGE_Y = 168;
+const IMAGE_H = 250;
+const INFO_Y = IMAGE_Y + IMAGE_H + 14;
+const FILL_Y = INFO_Y + 72;
+
+function summaryPageHeight(fillCount: number): number {
+  const count = Math.max(fillCount, 1);
+  const last = FILL_Y + 20 + (count - 1) * 18 + 16;
+  return Math.min(LETTER_H, last + 24);
+}
+
+function decorationPageHeight(json: ProofSource): number {
+  const block = (count: number) => 16 + count * 83;
+  const team = json.teamDecoration?.length ?? 0;
+  const roster = json.rosterDecoration?.length ?? 0;
+  const last = 68 + block(team) + 6 + block(roster);
+  return Math.min(LETTER_H, last + 22);
+}
+
+const ROSTER_PAGE_H = 280;
 const VIEW_PX = 500;
 const MARK_W = 340;
 const MARK_H = 140;
 
 export async function buildProofPdf(json: ProofSource, images: Map<string, Buffer>): Promise<Buffer> {
-  const [header, front, back, left, right, marks] = await Promise.all([
+  const [header, front, back, marks] = await Promise.all([
     loadHeader(),
     prepareView(images.get("front.png")),
     prepareView(images.get("back.png")),
-    prepareView(images.get("left.png")),
-    prepareView(images.get("right.png")),
     fitMarks(json, images),
   ]);
-  const views = { front, back, left, right };
+  const views = { front, back };
+  const page1 = summaryPageHeight(json.fillColors?.length ?? 0);
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: [PAGE_W, PAGE1_H], margin: 0 });
+    const doc = new PDFDocument({ size: [PAGE_W, page1], margin: 0 });
     const chunks: Buffer[] = [];
     doc.on("data", (chunk: Buffer) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
-    drawProof(doc, json, marks, views, header);
+    drawProof(doc, json, marks, views, header, page1);
     doc.end();
   });
 }
@@ -80,18 +98,20 @@ function drawProof(
   doc: PDFKit.PDFDocument,
   json: ProofSource,
   images: Map<string, Buffer>,
-  views: Record<"front" | "back" | "left" | "right", Buffer | null>,
+  views: Record<"front" | "back", Buffer | null>,
   header: Buffer | null,
+  page1: number,
 ) {
-  paintPage(doc, PAGE1_H);
+  paintPage(doc, page1);
   drawHeader(doc, header);
   drawSummary(doc, views, json.fillColors ?? []);
-  doc.addPage({ size: "LETTER", margin: 0 });
-  paintPage(doc, LETTER_H);
+  const page2 = decorationPageHeight(json);
+  doc.addPage({ size: [PAGE_W, page2], margin: 0 });
+  paintPage(doc, page2);
   drawHeader(doc, header);
   drawDecorations(doc, json, images, header);
-  doc.addPage({ size: "LETTER", margin: 0 });
-  paintPage(doc, LETTER_H);
+  doc.addPage({ size: [PAGE_W, ROSTER_PAGE_H], margin: 0 });
+  paintPage(doc, ROSTER_PAGE_H);
   drawHeader(doc, header);
   drawRosterPage(doc);
 }
@@ -119,7 +139,7 @@ function drawHeader(doc: PDFKit.PDFDocument, header: Buffer | null) {
 
 function drawSummary(
   doc: PDFKit.PDFDocument,
-  views: Record<"front" | "back" | "left" | "right", Buffer | null>,
+  views: Record<"front" | "back", Buffer | null>,
   fills: ProofFill[],
 ) {
   doc.font("Helvetica-Bold").fontSize(13);
@@ -149,38 +169,31 @@ function drawSummary(
     hardText(doc, value, 160, y);
   });
 
-  const slots = [views.front, views.back, views.left, views.right];
+  const slots = [views.front, views.back];
   const imageW = 250;
-  const imageH = 250;
   const originX = 46;
-  const originY = 168;
   slots.forEach((image, index) => {
-    const col = index % 2;
-    const row = Math.floor(index / 2);
-    const x = originX + col * (imageW + 20);
-    const y = originY + row * (imageH + 8);
-    if (image) doc.image(image, x, y, { fit: [imageW, imageH], align: "center", valign: "center" });
+    const x = originX + index * (imageW + 20);
+    if (image) doc.image(image, x, IMAGE_Y, { fit: [imageW, IMAGE_H], align: "center", valign: "bottom" });
   });
 
-  const infoY = 692;
-  doc.font("Helvetica-Bold").fontSize(8).fillColor(CYAN).text("GARMENT INFO:", MARGIN + 10, infoY, { lineBreak: false });
+  doc.font("Helvetica-Bold").fontSize(8).fillColor(CYAN).text("GARMENT INFO:", MARGIN + 10, INFO_Y, { lineBreak: false });
   const garment: [string, string][] = [
     ["STYLE # :", PROOF_ORDER.style],
     ["SIZE :", PROOF_ORDER.size],
     ["QTY :", PROOF_ORDER.qty],
   ];
   garment.forEach(([label, value], index) => {
-    const y = infoY + 18 + index * 14;
+    const y = INFO_Y + 18 + index * 14;
     doc.font("Helvetica-Bold").fontSize(8).fillColor(INK).text(label, MARGIN + 10, y, { lineBreak: false });
     hardText(doc, value, 140, y);
   });
-  doc.font("Helvetica-Bold").fontSize(8).fillColor(INK).text("DESIGN:", 300, infoY + 18, { lineBreak: false });
-  hardText(doc, PROOF_ORDER.design, 360, infoY + 18);
+  doc.font("Helvetica-Bold").fontSize(8).fillColor(INK).text("DESIGN:", 300, INFO_Y + 18, { lineBreak: false });
+  hardText(doc, PROOF_ORDER.design, 360, INFO_Y + 18);
 
-  const fillY = 770;
-  doc.font("Helvetica-Bold").fontSize(8).fillColor(CYAN).text("FILL COLORS:", MARGIN + 10, fillY, { lineBreak: false });
+  doc.font("Helvetica-Bold").fontSize(8).fillColor(CYAN).text("FILL COLORS:", MARGIN + 10, FILL_Y, { lineBreak: false });
   fills.forEach((fill, index) => {
-    const y = fillY + 20 + index * 18;
+    const y = FILL_Y + 20 + index * 18;
     const role = `${fill.role.toUpperCase()}:`;
     doc.font("Helvetica-Bold").fontSize(8).fillColor(INK).text(role, MARGIN + 10, y, { lineBreak: false });
     drawSwatch(doc, 168, y - 2, fill.hex);
@@ -309,7 +322,13 @@ function drawSwatch(doc: PDFKit.PDFDocument, x: number, y: number, hex: string) 
 }
 
 async function prepareView(buffer: Buffer | undefined): Promise<Buffer | null> {
-  return knockOutWhite(await fitPng(buffer, VIEW_PX, VIEW_PX));
+  const knocked = await knockOutWhite(await fitPng(buffer, VIEW_PX, VIEW_PX));
+  if (!knocked) return null;
+  try {
+    return await sharp(knocked).trim({ threshold: 12 }).png().toBuffer();
+  } catch {
+    return knocked;
+  }
 }
 
 async function fitMarks(json: ProofSource, images: Map<string, Buffer>): Promise<Map<string, Buffer>> {

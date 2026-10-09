@@ -307,7 +307,7 @@ export async function extractDecorations(sheet: Buffer): Promise<ExtractedDecora
   if (!apiKey) throw new Error("MAGNIFIC_API_KEY is not set.");
   const referenceUrl = await uploadToMagnific(apiKey, sheet, "image/png");
   const jobs = [
-    ...SHEET_VIEWS.map((view) => ({
+    ...(["front", "back"] as const).map((view) => ({
       name: `${view}.png`,
       prompt: viewPrompt(view),
       aspectRatio: "traditional_3_4",
